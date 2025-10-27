@@ -25,20 +25,37 @@ let pg: any = null;
 
 let dbConfig: any = null;
 let DB_ENGINE = 'mssql';
-if (process.env.MCP_SERVER_CONFIG) {
-  try {
-    dbConfig = JSON.parse(process.env.MCP_SERVER_CONFIG);
-    DB_ENGINE = dbConfig.engine || 'mssql';
-    if (DB_ENGINE === 'mssql') {
-      sql = require('mssql');
-    } else if (DB_ENGINE === 'postgres') {
-      pg = require('pg');
+
+// Función para inicializar la configuración y cargar los módulos necesarios
+async function initializeDatabase() {
+  if (process.env.MCP_SERVER_CONFIG) {
+    try {
+      dbConfig = JSON.parse(process.env.MCP_SERVER_CONFIG);
+      DB_ENGINE = dbConfig.engine || 'mssql';
+
+      if (DB_ENGINE === 'mssql') {
+        try {
+          sql = (await import('mssql')).default;
+        } catch (importError) {
+          throw new Error(`No se pudo cargar el módulo 'mssql'. Asegúrate de que está instalado: npm install mssql`);
+        }
+      } else if (DB_ENGINE === 'postgres') {
+        try {
+          // @ts-ignore - pg es una dependencia opcional
+          pg = (await import('pg')).default;
+        } catch (importError) {
+          throw new Error(`No se pudo cargar el módulo 'pg'. Asegúrate de que está instalado: npm install pg`);
+        }
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('No se pudo cargar el módulo')) {
+        throw e;
+      }
+      throw new Error('Error al parsear MCP_SERVER_CONFIG: ' + e);
     }
-  } catch (e) {
-    throw new Error('Error al parsear MCP_SERVER_CONFIG: ' + e);
+  } else {
+    throw new Error('No se encontró configuración de conexión (MCP_SERVER_CONFIG)');
   }
-} else {
-  throw new Error('No se encontró configuración de conexión (MCP_SERVER_CONFIG)');
 }
 
 // Configuración del servidor
@@ -1017,6 +1034,9 @@ server.tool(
 
 // Función principal para ejecutar el servidor
 async function main() {
+  // Inicializar la base de datos y cargar los módulos necesarios
+  await initializeDatabase();
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(`${SERVER_NAME} MCP Server v${SERVER_VERSION} ejecutándose en stdio`);
