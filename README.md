@@ -1,26 +1,55 @@
 # MCP Database Server
 
-Un servidor MCP (Model Context Protocol) genérico para interactuar con bases de datos SQL Server, proporcionando análisis de esquemas, consultas seguras, generación de diagramas ER y gestión avanzada de tablas espejo/históricas.
+Un servidor MCP (Model Context Protocol) genérico para interactuar con bases de datos SQL Server y PostgreSQL, proporcionando análisis de esquemas, consultas seguras, generación de diagramas ER y gestión avanzada de tablas espejo/históricas.
 
 ## ⚡ Quick Start
 
-### 1. Configuración Rápida
+### 1. Instalación y Configuración
 ```bash
 # Clonar y configurar
 git clone <repo-url>
 cd mcp-database
 npm install
 
-# Configurar variables de entorno
-cp .env.example .env
-# Editar .env con tus datos de conexión
-
-# Compilar y ejecutar
+# Compilar TypeScript
 npm run build
-npm start
 ```
 
-### 2. Primeras Pruebas
+### 2. Configuración del Servidor MCP (VS Code)
+
+El MCP recibe la configuración de conexión mediante la variable de entorno `MCP_SERVER_CONFIG` como un string JSON. Ejemplo de configuración en tu archivo de servidores MCP (`mcp.json`):
+
+#### Para SQL Server
+```jsonc
+"mcp-database": {
+  "env": {
+    "MCP_SERVER_CONFIG": "{\"engine\":\"mssql\",\"host\":\"localhost\",\"port\":1433,\"database\":\"mi_base\",\"user\":\"usuario\",\"password\":\"secreta\",\"encrypt\":false,\"trustServerCertificate\":true}"
+  },
+  "args": [
+    "c:/ruta/a/build/index.js"
+  ],
+  "type": "stdio",
+  "command": "node"
+}
+```
+
+#### Para PostgreSQL
+```jsonc
+"mcp-database": {
+  "env": {
+    "MCP_SERVER_CONFIG": "{\"engine\":\"postgres\",\"host\":\"localhost\",\"port\":5432,\"database\":\"mi_base\",\"user\":\"usuario\",\"password\":\"secreta\",\"ssl\":false}"
+  },
+  "args": [
+    "c:/ruta/a/build/index.js"
+  ],
+  "type": "stdio",
+  "command": "node"
+}
+```
+
+Solo debes cambiar los valores según tu entorno. El MCP detecta el motor automáticamente usando la propiedad `engine`.
+
+### 3. Primeras Pruebas
 Una vez ejecutándose, puedes probar estas herramientas básicas:
 - **Conectividad**: `test_database_connection`
 - **Explorar tablas**: `get_database_schema`
@@ -49,7 +78,7 @@ Una vez ejecutándose, puedes probar estas herramientas básicas:
 ## 🛠️ Herramientas MCP Disponibles (8 total)
 
 ### Herramientas de Conectividad y Consultas
-1. **`test_database_connection`** - Verifica la conectividad con la base de datos SQL Server
+1. **`test_database_connection`** - Verifica la conectividad con la base de datos configurada (SQL Server o PostgreSQL)
 2. **`execute_select_query`** - Ejecuta consultas SELECT personalizadas con validaciones de seguridad
 3. **`query_table_sample`** - Obtiene muestras de datos de cualquier tabla con filtros WHERE opcionales
 
@@ -64,16 +93,39 @@ Una vez ejecutándose, puedes probar estas herramientas básicas:
 
 ## ⚙️ Configuración
 
-### Variables de Entorno (.env)
+### Configuración del Servidor MCP (VS Code)
 
-```env
-# Configuración de base de datos SQL Server
-DB_HOST=tu_servidor_sql_server
-DB_PORT=1433
-DB_NAME=tu_base_de_datos
-DB_USER=tu_usuario
-DB_PASSWORD=tu_password
+El MCP ahora recibe la configuración de conexión mediante la variable de entorno `MCP_SERVER_CONFIG` como un string JSON. Ejemplo de configuración en tu archivo de servidores MCP (`mcp.json`):
+
+#### Para SQL Server
+```jsonc
+"mcp-database": {
+  "env": {
+    "MCP_SERVER_CONFIG": "{\"engine\":\"mssql\",\"host\":\"localhost\",\"port\":1433,\"database\":\"mi_base\",\"user\":\"usuario\",\"password\":\"secreta\",\"encrypt\":false,\"trustServerCertificate\":true}"
+  },
+  "args": [
+    "c:/ruta/a/build/index.js"
+  ],
+  "type": "stdio",
+  "command": "node"
+}
 ```
+
+#### Para PostgreSQL
+```jsonc
+"mcp-database": {
+  "env": {
+    "MCP_SERVER_CONFIG": "{\"engine\":\"postgres\",\"host\":\"localhost\",\"port\":5432,\"database\":\"mi_base\",\"user\":\"usuario\",\"password\":\"secreta\",\"ssl\":false}"
+  },
+  "args": [
+    "c:/ruta/a/build/index.js"
+  ],
+  "type": "stdio",
+  "command": "node"
+}
+```
+
+Solo debes cambiar los valores según tu entorno. El MCP detecta el motor automáticamente usando la propiedad `engine`.
 
 ### Instalación y Ejecución
 

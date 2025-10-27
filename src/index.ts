@@ -6,7 +6,40 @@ import 'dotenv/config';
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import sql from 'mssql';
+
+
+let sql: any = null;
+let pg: any = null;
+
+// Leer configuración de conexión desde el archivo de servidores MCP (pasada como process.env.MCP_SERVER_CONFIG)
+// El archivo MCP debe pasar la configuración como un JSON en la variable de entorno MCP_SERVER_CONFIG
+// Ejemplo: {
+//   "engine": "mssql" | "postgres",
+//   "host": "localhost",
+//   "port": 1433,
+//   "database": "mi_base",
+//   "user": "usuario",
+//   "password": "secreta",
+//   ...otros
+// }
+
+let dbConfig: any = null;
+let DB_ENGINE = 'mssql';
+if (process.env.MCP_SERVER_CONFIG) {
+  try {
+    dbConfig = JSON.parse(process.env.MCP_SERVER_CONFIG);
+    DB_ENGINE = dbConfig.engine || 'mssql';
+    if (DB_ENGINE === 'mssql') {
+      sql = require('mssql');
+    } else if (DB_ENGINE === 'postgres') {
+      pg = require('pg');
+    }
+  } catch (e) {
+    throw new Error('Error al parsear MCP_SERVER_CONFIG: ' + e);
+  }
+} else {
+  throw new Error('No se encontró configuración de conexión (MCP_SERVER_CONFIG)');
+}
 
 // Configuración del servidor
 const SERVER_NAME = "mcp-database";
@@ -22,83 +55,83 @@ const server = new McpServer({
   },
 });
 
-// Tipos para la base de datos
-interface DatabaseConfig {
-  server: string;
-  port?: number;
-  database: string;
-  user: string;
-  password: string;
-  options: {
-    encrypt: boolean;
-    trustServerCertificate: boolean;
-    enableArithAbort: boolean;
-    connectionTimeout: number;
-    requestTimeout: number;
-  };
+
+
+let connectionPool: any = null;
+
+// Función para obtener pool/conexión según motor
+async function getConnectionPool(): Promise<any> {
+  if (DB_ENGINE === 'mssql') {
+    if (!connectionPool) {
+      connectionPool = new sql.ConnectionPool({
+        server: dbConfig.host,
+        port: dbConfig.port || 1433,
+        database: dbConfig.database,
+        user: dbConfig.user,
+        password: dbConfig.password,
+        options: {
+          encrypt: dbConfig.encrypt || false,
+          trustServerCertificate: dbConfig.trustServerCertificate || true,
+          enableArithAbort: true,
+          connectionTimeout: dbConfig.connectionTimeout || 30000,
+          requestTimeout: dbConfig.requestTimeout || 30000,
+        }
+      });
+      connectionPool.on('connect', () => {
+        console.error(`[INFO] 🟢 Pool MSSQL conectado exitosamente`);
+      });
+      connectionPool.on('error', (err: any) => {
+        console.error(`[ERROR] 🔴 Error en pool MSSQL: ${err}`);
+      });
+      await connectionPool.connect();
+      console.error(`[INFO] Conectado a SQL Server: ${dbConfig.host}:${dbConfig.port}/${dbConfig.database}`);
+    }
+    return connectionPool;
+  } else if (DB_ENGINE === 'postgres') {
+    if (!connectionPool) {
+      connectionPool = new pg.Pool({
+        host: dbConfig.host,
+        port: dbConfig.port || 5432,
+        database: dbConfig.database,
+        user: dbConfig.user,
+        password: dbConfig.password,
+        ssl: dbConfig.ssl || false,
+        connectionTimeoutMillis: dbConfig.connectionTimeout || 30000,
+        statement_timeout: dbConfig.requestTimeout || 30000,
+      });
+      connectionPool.on('connect', () => {
+        console.error(`[INFO] 🟢 Pool PostgreSQL conectado exitosamente`);
+      });
+      connectionPool.on('error', (err: any) => {
+        console.error(`[ERROR] 🔴 Error en pool PostgreSQL: ${err}`);
+      });
+      // No es necesario .connect() para pg.Pool
+      console.error(`[INFO] Conectado a PostgreSQL: ${dbConfig.host}:${dbConfig.port}/${dbConfig.database}`);
+    }
+    return connectionPool;
+  }
+  throw new Error('DB_ENGINE no soportado');
 }
 
-const dbConfig: DatabaseConfig = {
-  server: process.env.DB_HOST || '',
-  port: parseInt(process.env.DB_PORT || '1433', 10),
-  database: process.env.DB_NAME || '',
-  user: process.env.DB_USER || '',
-  password: process.env.DB_PASSWORD || '',
-  options: {
-    encrypt: false, // Cambiar a false para túneles locales
-    trustServerCertificate: true,
-    enableArithAbort: true,
-    connectionTimeout: 30000,
-    requestTimeout: 30000,
-  }
-};
-
-// Pool de conexiones SQL Server
-let connectionPool: sql.ConnectionPool | null = null;
-
-// Función para obtener o crear pool de conexiones
-async function getConnectionPool(): Promise<sql.ConnectionPool> {
-  if (!connectionPool) {
-    console.error(`[DEBUG] Intentando conectar a SQL Server:`);
-    console.error(`[DEBUG] - Server: ${dbConfig.server}`);
-    console.error(`[DEBUG] - Port: ${dbConfig.port}`);
-    console.error(`[DEBUG] - Database: ${dbConfig.database}`);
-    console.error(`[DEBUG] - User: ${dbConfig.user}`);
-    console.error(`[DEBUG] - Encrypt: ${dbConfig.options.encrypt}`);
-
-    connectionPool = new sql.ConnectionPool(dbConfig);
-
-    // Agregar listeners para eventos de conexión
-    connectionPool.on('connect', () => {
-      console.error(`[INFO] 🟢 Pool conectado exitosamente`);
-    });
-
-    connectionPool.on('error', (err) => {
-      console.error(`[ERROR] 🔴 Error en pool de conexiones: ${err}`);
-    });
-
-    await connectionPool.connect();
-    console.error(`[INFO] Conectado a SQL Server: ${dbConfig.server}:${dbConfig.port}/${dbConfig.database}`);
-  }
-  return connectionPool;
-}
-
-// Función helper para ejecutar consultas SQL
+// Función helper para ejecutar consultas SQL multi-motor
 async function executeQuery(query: string, params: any[] = []): Promise<any[]> {
   try {
     const pool = await getConnectionPool();
     console.error(`[DEBUG] Ejecutando query: ${query}`);
     console.error(`[DEBUG] Parámetros: ${JSON.stringify(params)}`);
-
-    const request = pool.request();
-
-    // Agregar parámetros si existen
-    params.forEach((param, index) => {
-      request.input(`param${index}`, param);
-    });
-
-    const result = await request.query(query);
-    return result.recordset || [];
+    if (DB_ENGINE === 'mssql') {
+      const request = pool.request();
+      params.forEach((param, index) => {
+        request.input(`param${index}`, param);
+      });
+      const result = await request.query(query);
+      return result.recordset || [];
+    } else if (DB_ENGINE === 'postgres') {
+      // Reemplazar parámetros $1, $2, ...
+      const res = await pool.query(query, params);
+      return res.rows || [];
+    }
+    throw new Error('DB_ENGINE no soportado');
   } catch (error) {
     console.error(`[ERROR] Error ejecutando query: ${error}`);
     throw error;
@@ -109,50 +142,78 @@ async function executeQuery(query: string, params: any[] = []): Promise<any[]> {
 async function testConnection(): Promise<boolean> {
   try {
     const pool = await getConnectionPool();
-    const result = await pool.request().query('SELECT 1 as test');
-    console.error(`[DEBUG] Test de conexión exitoso a ${dbConfig.server}/${dbConfig.database}`);
-    return result.recordset.length > 0;
+    let result;
+    if (DB_ENGINE === 'mssql') {
+      result = await pool.request().query('SELECT 1 as test');
+      return result.recordset.length > 0;
+    } else if (DB_ENGINE === 'postgres') {
+      result = await pool.query('SELECT 1 as test');
+      return result.rows.length > 0;
+    }
+    return false;
   } catch (error) {
     console.error(`[ERROR] Error de conexión: ${error}`);
     return false;
   }
 }
 
-// Función para obtener estructura de tabla específica
-async function getTableStructure(tableName: string): Promise<any[]> {
+// Función para obtener estructura de tabla específica (multi-motor)
+async function getTableStructure(tableName: string, schema?: string): Promise<any[]> {
   try {
-    const query = `
-      SELECT 
-        c.COLUMN_NAME,
-        c.DATA_TYPE,
-        c.IS_NULLABLE,
-        c.COLUMN_DEFAULT,
-        c.CHARACTER_MAXIMUM_LENGTH,
-        c.NUMERIC_PRECISION,
-        c.NUMERIC_SCALE,
-        c.ORDINAL_POSITION,
-        CASE 
-          WHEN pk.COLUMN_NAME IS NOT NULL THEN 'YES'
-          ELSE 'NO'
-        END as IS_PRIMARY_KEY
-      FROM INFORMATION_SCHEMA.COLUMNS c
-      LEFT JOIN (
-        SELECT ku.TABLE_NAME, ku.COLUMN_NAME
-        FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS tc
-        INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS ku
-          ON tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
-          AND tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME
-      ) pk ON c.TABLE_NAME = pk.TABLE_NAME AND c.COLUMN_NAME = pk.COLUMN_NAME
-      WHERE c.TABLE_NAME = @param0
-      ORDER BY c.ORDINAL_POSITION
-    `;
-
-    const pool = await getConnectionPool();
-    const request = pool.request();
-    request.input('param0', tableName);
-    const result = await request.query(query);
-
-    return result.recordset || [];
+    let query = '';
+    let params: any[] = [];
+    if (DB_ENGINE === 'mssql') {
+      query = `
+        SELECT 
+          c.COLUMN_NAME,
+          c.DATA_TYPE,
+          c.IS_NULLABLE,
+          c.COLUMN_DEFAULT,
+          c.CHARACTER_MAXIMUM_LENGTH,
+          c.NUMERIC_PRECISION,
+          c.NUMERIC_SCALE,
+          c.ORDINAL_POSITION,
+          CASE 
+            WHEN pk.COLUMN_NAME IS NOT NULL THEN 'YES'
+            ELSE 'NO'
+          END as IS_PRIMARY_KEY
+        FROM INFORMATION_SCHEMA.COLUMNS c
+        LEFT JOIN (
+          SELECT ku.TABLE_NAME, ku.COLUMN_NAME
+          FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS tc
+          INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS ku
+            ON tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+            AND tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME
+        ) pk ON c.TABLE_NAME = pk.TABLE_NAME AND c.COLUMN_NAME = pk.COLUMN_NAME
+        WHERE c.TABLE_NAME = @param0
+        ORDER BY c.ORDINAL_POSITION
+      `;
+      params = [tableName];
+    } else if (DB_ENGINE === 'postgres') {
+      query = `
+        SELECT 
+          c.column_name as COLUMN_NAME,
+          c.data_type as DATA_TYPE,
+          c.is_nullable as IS_NULLABLE,
+          c.column_default as COLUMN_DEFAULT,
+          c.character_maximum_length as CHARACTER_MAXIMUM_LENGTH,
+          c.numeric_precision as NUMERIC_PRECISION,
+          c.numeric_scale as NUMERIC_SCALE,
+          c.ordinal_position as ORDINAL_POSITION,
+          CASE WHEN tc.constraint_type = 'PRIMARY KEY' THEN 'YES' ELSE 'NO' END as IS_PRIMARY_KEY
+        FROM information_schema.columns c
+        LEFT JOIN information_schema.key_column_usage kcu
+          ON c.table_name = kcu.table_name AND c.column_name = kcu.column_name AND c.table_schema = kcu.table_schema
+        LEFT JOIN information_schema.table_constraints tc
+          ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema
+        WHERE c.table_name = $1
+        ${schema ? 'AND c.table_schema = $2' : ''}
+        ORDER BY c.ordinal_position
+      `;
+      params = schema ? [tableName, schema] : [tableName];
+    }
+    const result = await executeQuery(query, params);
+    return result;
   } catch (error) {
     console.error(`[ERROR] Error obteniendo estructura de tabla ${tableName}: ${error}`);
     throw error;
@@ -397,7 +458,7 @@ server.tool(
           {
             type: "text",
             text: isConnected
-              ? `✅ Conexión exitosa a SQL Server: ${dbConfig.server}/${dbConfig.database}`
+              ? `✅ Conexión exitosa a ${DB_ENGINE === 'mssql' ? 'SQL Server' : 'PostgreSQL'}: ${dbConfig.host}/${dbConfig.database}`
               : `❌ Error de conexión a la base de datos`,
           },
         ],
@@ -959,7 +1020,11 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(`${SERVER_NAME} MCP Server v${SERVER_VERSION} ejecutándose en stdio`);
-  console.error(`Configurado para SQL Server: ${dbConfig.server}/${dbConfig.database}`);
+  if (DB_ENGINE === 'mssql') {
+    console.error(`Configurado para SQL Server: ${dbConfig.host}/${dbConfig.database}`);
+  } else if (DB_ENGINE === 'postgres') {
+    console.error(`Configurado para PostgreSQL: ${dbConfig.host}/${dbConfig.database}`);
+  }
 }
 
 // Manejo de señales para cerrar conexiones correctamente
